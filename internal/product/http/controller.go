@@ -1,9 +1,12 @@
 package http
 
 import (
+	"encoding/json"
+	categoryservice "ecom/internal/category/service"
 	"ecom/internal/product/dto"
 	"ecom/internal/product/entity"
-	"ecom/internal/product/service"
+	productservice "ecom/internal/product/service"
+	"ecom/pkg/cloudinary"
 	"ecom/pkg/response"
 	"ecom/pkg/utils"
 	"net/http"
@@ -15,13 +18,15 @@ import (
 )
 
 type ProductController struct {
-	srv       *service.ProductService
+	srv       *productservice.ProductService
+	catSvc    *categoryservice.CategoryService
 	validator validation.Validation
 }
 
-func NewProductController(srv *service.ProductService, validator validation.Validation) *ProductController {
+func NewProductController(srv *productservice.ProductService, catSvc *categoryservice.CategoryService, validator validation.Validation) *ProductController {
 	return &ProductController{
 		srv:       srv,
+		catSvc:    catSvc,
 		validator: validator,
 	}
 }
@@ -117,19 +122,92 @@ func (ctrl *ProductController) GetBySlug(ctx *gin.Context) {
 }
 
 func (ctrl *ProductController) Create(ctx *gin.Context) {
-	var req dto.CreateProductReq
-	if err := ctx.ShouldBindJSON(&req); ctx.Request.Body == nil || err != nil {
-		logger.Error("Failed to get body", err)
-		response.Error(ctx, http.StatusBadRequest, err, "Invalid parameters")
-		return
+	// Parse simple form fields
+	name := ctx.PostForm("name")
+	description := ctx.PostForm("description")
+	shortDescription := ctx.PostForm("short_description")
+	categoryID := ctx.PostForm("category_id")
+	basePriceStr := ctx.PostForm("base_price")
+	featuredStr := ctx.PostForm("featured")
+	bestSellerStr := ctx.PostForm("best_seller")
+	variantsJSON := ctx.PostForm("variants")
+	nutritionalInfoJSON := ctx.PostForm("nutritional_info")
+
+	basePrice, _ := strconv.ParseFloat(basePriceStr, 64)
+
+	var variants []dto.VariantReq
+	if variantsJSON != "" {
+		if err := json.Unmarshal([]byte(variantsJSON), &variants); err != nil {
+			logger.Error("Failed to parse variants", err)
+			response.Error(ctx, http.StatusBadRequest, err, "Invalid variants format")
+			return
+		}
 	}
+
+	var nutritionalInfo *dto.NutritionalInfoReq
+	if nutritionalInfoJSON != "" {
+		if err := json.Unmarshal([]byte(nutritionalInfoJSON), &nutritionalInfo); err != nil {
+			logger.Error("Failed to parse nutritional_info", err)
+			response.Error(ctx, http.StatusBadRequest, err, "Invalid nutritional_info format")
+			return
+		}
+	}
+
+	req := &dto.CreateProductReq{
+		Name:             name,
+		Description:      description,
+		ShortDescription: shortDescription,
+		CategoryID:       categoryID,
+		BasePrice:        basePrice,
+		Variants:         variants,
+		NutritionalInfo:  nutritionalInfo,
+		Featured:         featuredStr == "true",
+		BestSeller:       bestSellerStr == "true",
+	}
+
 	if err := ctrl.validator.ValidateStruct(req); err != nil {
 		logger.Error("Validation failed", err)
 		response.Error(ctx, http.StatusBadRequest, err, "Invalid parameters")
 		return
 	}
 
-	product, err := ctrl.srv.Create(ctx, &req)
+	// Fetch category to build Cloudinary folder path
+	category, err := ctrl.catSvc.GetByID(ctx, categoryID)
+	if err != nil {
+		logger.Error("Category not found", err)
+		response.Error(ctx, http.StatusBadRequest, err, "Category not found")
+		return
+	}
+
+	// Upload images to Cloudinary under products/<category-slug>/
+	form, err := ctx.MultipartForm()
+	if err != nil || len(form.File["images"]) == 0 {
+		response.Error(ctx, http.StatusBadRequest, err, "At least one image is required")
+		return
+	}
+
+	folder := "products/" + category.Slug
+	var imageURLs []string
+	for _, fileHeader := range form.File["images"] {
+		file, err := fileHeader.Open()
+		if err != nil {
+			logger.Error("Failed to open image file", err)
+			response.Error(ctx, http.StatusInternalServerError, err, "Failed to process image")
+			return
+		}
+		defer file.Close()
+
+		url, err := cloudinary.UploadImage(ctx, file, folder)
+		if err != nil {
+			logger.Error("Failed to upload image to Cloudinary", err)
+			response.Error(ctx, http.StatusInternalServerError, err, "Failed to upload image")
+			return
+		}
+		imageURLs = append(imageURLs, url)
+	}
+	req.Images = imageURLs
+
+	product, err := ctrl.srv.Create(ctx, req)
 	if err != nil {
 		logger.Error("Failed to create product", err)
 		response.Error(ctx, http.StatusConflict, err, "Failed to create product")

@@ -1,6 +1,8 @@
 package http
 
 import (
+	categoryrepository "ecom/internal/category/repository"
+	categoryservice "ecom/internal/category/service"
 	"ecom/internal/product/repository"
 	"ecom/internal/product/service"
 	"ecom/pkg/dbs"
@@ -14,7 +16,11 @@ import (
 func Routes(r *gin.RouterGroup, db *dbs.Database, validator validation.Validation) {
 	productRepo := repository.NewProductRepository(db)
 	productSvc := service.NewProductService(productRepo)
-	productController := NewProductController(productSvc, validator)
+
+	catRepo := categoryrepository.NewCategoryRepository(db)
+	catSvc := categoryservice.NewCategoryService(catRepo)
+
+	productController := NewProductController(productSvc, catSvc, validator)
 
 	authMiddleware := middleware.JWT(jwt.AccessTokenType, db)
 	adminMiddleware := middleware.RequireAdmin()

@@ -29,11 +29,11 @@ func JWT(tokenType string, db *dbs.Database) gin.HandlerFunc {
 		}
 
 		ctx.Set("userId", userId)
-		ctx.Set("role", payload["role"])
 		var user *entity.User
 
 		db.FindById(ctx, userId, &user)
 		ctx.Set("user", user)
+		ctx.Set("role", user.Role)
 		ctx.Next()
 	}
 }

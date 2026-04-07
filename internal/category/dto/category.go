@@ -3,15 +3,17 @@ package dto
 import "time"
 
 type CreateCategoryReq struct {
-	Name        string `json:"name" validate:"required"`
-	Description string `json:"description"`
-	Image       string `json:"image"`
+	Name        string `form:"name" validate:"required"`
+	Description string `form:"description"`
+	// Image is set by the controller after uploading to Cloudinary.
+	Image string
 }
 
 type UpdateCategoryReq struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Image       string `json:"image"`
+	Name        string `form:"name"`
+	Description string `form:"description"`
+	// Image is set by the controller after uploading to Cloudinary (optional on update).
+	Image string
 }
 
 type CategoryRes struct {
